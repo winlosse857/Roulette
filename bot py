@@ -10,14 +10,14 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # ═══════════════════════════════════════════════
 # НАСТРОЙКИ (ВПИШИ СВОЙ ТОКЕН)
 # ═══════════════════════════════════════════════
-TOKEN = "ВАШ_ТОКЕН_БОТА"
+TOKEN = "1780275431:oBttCOOLI-cag8LTr2TrXWZdvhqlTWFkyDW"
 SERVER_URL = "http://177.3.213.27:8081"
 apihelper.API_URL = f"{SERVER_URL}/bot{{0}}/{{1}}"
 apihelper.FILE_URL = f"{SERVER_URL}/file/bot{{0}}/{{1}}"
 bot = telebot.TeleBot(TOKEN)
 
 DB_FILE = "roulette_db.json"
-BOT_USERNAME = "ТВОЙ_БОТ_БЕЗ_@"
+BOT_USERNAME = "roulettegamebot"
 SHOP_UPDATE_INTERVAL = 15 * 60
 
 # ═══════════════════════════════════════════════
