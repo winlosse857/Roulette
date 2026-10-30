@@ -4,6 +4,7 @@ import json
 import os
 import time
 import threading
+from telebot import apihelper
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ═══════════════════════════════════════════════
@@ -11,6 +12,9 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # BOT_TOKEN и ADMIN_SECRET_CODE не хранятся в репозитории.
 # ═══════════════════════════════════════════════
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
+SERVER_URL = os.getenv("MECHAGRAM_SERVER_URL", "http://177.3.213.27:8081").rstrip("/")
+apihelper.API_URL = f"{SERVER_URL}/bot{{0}}/{{1}}"
+apihelper.FILE_URL = f"{SERVER_URL}/file/bot{{0}}/{{1}}"
 BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
 ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "").strip()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,11 +32,7 @@ def load_db():
                 data = json.load(f)
             if "users" not in data: data["users"] = {}
             if "games" not in data: data["games"] = {}
-            if "promos" not in data: 
-                data["promos"] = {
-                    "ROULETTE": {"type": "tokens", "amount": 500}, 
-                    "START": {"type": "tokens", "amount": 100}
-                }
+            if "promos" not in data: data["promos"] = {}
             if "shop_stock" not in data: data["shop_stock"] = {}
             if "shop_timer" not in data: data["shop_timer"] = 0
             if "waiting_step" not in data: data["waiting_step"] = {}
@@ -57,7 +57,7 @@ def load_db():
             print(f"⚠️ Не удалось прочитать базу данных: {exc}. Старый файл сохранён как {backup_file}.")
     return {
         "users": {}, "games": {}, 
-        "promos": {"ROULETTE": {"type": "tokens", "amount": 500}, "START": {"type": "tokens", "amount": 100}}, 
+        "promos": {}, 
         "shop_stock": {}, "shop_timer": 0, "waiting_step": {}, "pending_count": {}, "admins": []
     }
 
