@@ -61,7 +61,7 @@ def load_db():
 
 def save_db(db):
     # Атомарная запись: при аварийном завершении старый JSON останется целым.
-    temp_file = DB_FILE + ".tmp"
+    temp_file = f"{DB_FILE}.{threading.get_ident()}.tmp"
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
         f.flush()
