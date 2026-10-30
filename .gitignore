@@ -4,3 +4,5 @@ __pycache__/
 venv/
 roulette_db.json
 .env
+*.tmp
+*.corrupt
