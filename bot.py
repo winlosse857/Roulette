@@ -38,7 +38,14 @@ def load_db():
             if "waiting_step" not in data: data["waiting_step"] = {}
             if "pending_count" not in data: data["pending_count"] = {}
             return data
-        except Exception: pass
+        except Exception as exc:
+            backup_file = DB_FILE + ".corrupt"
+            try:
+                if not os.path.exists(backup_file):
+                    os.replace(DB_FILE, backup_file)
+            except OSError:
+                pass
+            print(f"⚠️ Не удалось прочитать базу данных: {exc}. Старый файл сохранён как {backup_file}.")
     return {
         "users": {}, "games": {}, 
         "promos": {"ROULETTE": {"type": "tokens", "amount": 500}, "START": {"type": "tokens", "amount": 100}}, 
@@ -46,8 +53,13 @@ def load_db():
     }
 
 def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
+    # Атомарная запись: при аварийном завершении старый JSON останется целым.
+    temp_file = DB_FILE + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp_file, DB_FILE)
 
 db = load_db()
 
@@ -471,6 +483,7 @@ def start_afk_timer(game_id, chat_id, turn_token=None):
             start_afk_timer(game_id, chat_id, turn_token)
         elif warns == 1:
             game["afk_warned"].append(current_player)
+            game["next_shot_bullet"] = None
             user["balance"] -= 10
             save_db(db)
             safe_send(chat_id, f"💸 @{user['username'] or current_player}, -10 токенов за АФК.")
@@ -478,6 +491,7 @@ def start_afk_timer(game_id, chat_id, turn_token=None):
             save_db(db)
             next_turn(game_id, chat_id)
         else:
+            game["next_shot_bullet"] = None
             user["ban_until"] = time.time() + 300
             game["players"].remove(current_player)
             del game["lives"][current_player]
@@ -511,10 +525,13 @@ def use_xray(call):
     is_bullet = game["next_shot_bullet"]
     status = "БОЕВОЙ 🔴" if is_bullet else "ХОЛОСТОЙ ⚪"
     try:
-        bot.send_message(call.from_user.id, f"👓 Твой рентген показывает: патрон **{status}**")
+        bot.send_message(call.from_user.id, f"👓 Твой рентген показывает: патрон {status}")
+        save_db(db)
         safe_answer(call, "📩 Инфа отправлена в ЛС!")
     except Exception:
-        safe_answer(call, "⚠️ Не могу написать в ЛС! Нажми /start у бота в личке.", show_alert=True)
+        user["inventory"]["xray"] += 1
+        save_db(db)
+        safe_answer(call, "⚠️ Не могу написать в ЛС! Нажми /start у бота в личке. Очки возвращены.", show_alert=True)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("use_angel_"))
 def use_angel(call):
@@ -546,6 +563,7 @@ def use_pill(call):
     user = get_user(current_p)
     if user["inventory"]["pill"] <= 0: return safe_answer(call, "❌ Нет таблеток!")
     game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
+    game["next_shot_bullet"] = None
     user["inventory"]["pill"] -= 1
     msg = safe_send(call.message.chat.id, "💊 Ты проглотил таблетку...")
     if not msg:
