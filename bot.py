@@ -173,6 +173,12 @@ def players_kb(game_id):
     kb.add(InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_{game_id}"))
     return kb
 
+def players_count_kb():
+    kb = InlineKeyboardMarkup(row_width=3)
+    for count in range(2, 11):
+        kb.add(InlineKeyboardButton(str(count), callback_data=f"players_count_{count}"))
+    return kb
+
 def top_menu():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -387,7 +393,29 @@ def create_game(message):
     
     db["waiting_step"][str(message.from_user.id)] = "players_count"
     save_db(db)
-    safe_send(message.chat.id, "🔫 Сколько игроков будет в игре? (от 2 до 10)")
+    safe_send(
+        message.chat.id,
+        "🔫 Выбери количество игроков:",
+        players_count_kb()
+    )
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("players_count_"))
+def choose_players_count(call):
+    user_id = str(call.from_user.id)
+    if db.get("waiting_step", {}).get(user_id) != "players_count":
+        return safe_answer(call, "Эта настройка уже неактивна.", show_alert=True)
+    try:
+        count = int(call.data.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        return safe_answer(call, "Некорректное количество игроков.", show_alert=True)
+    if count < 2 or count > 10:
+        return safe_answer(call, "Выбери от 2 до 10 игроков.", show_alert=True)
+
+    db["waiting_step"][user_id] = "bet"
+    db["pending_count"][user_id] = count
+    save_db(db)
+    safe_answer(call, f"Выбрано игроков: {count}")
+    safe_send(call.message.chat.id, "💰 Ставка в токенах (0 — бесплатно):")
 
 @bot.message_handler(func=lambda m: db.get("waiting_step", {}).get(str(m.from_user.id)) == "players_count")
 def process_players_count(message):
