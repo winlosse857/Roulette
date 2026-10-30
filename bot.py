@@ -8,17 +8,18 @@ from telebot import apihelper
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ═══════════════════════════════════════════════
-# НАСТРОЙКИ (ВПИШИ СВОЙ ТОКЕН)
+# НАСТРОЙКИ (ВПИШИ СВОЙ ТОКЕН И СЕРВЕР)
 # ═══════════════════════════════════════════════
-TOKEN = "1780275431:oBttCOOLI-cag8LTr2TrXWZdvhqlTWFkyDW"
+TOKEN = "ВАШ_ТОКЕН_БОТА"
 SERVER_URL = "http://177.3.213.27:8081"
 apihelper.API_URL = f"{SERVER_URL}/bot{{0}}/{{1}}"
 apihelper.FILE_URL = f"{SERVER_URL}/file/bot{{0}}/{{1}}"
 bot = telebot.TeleBot(TOKEN)
 
 DB_FILE = "roulette_db.json"
-BOT_USERNAME = "roulettegamebot"
+BOT_USERNAME = "ТВОЙ_БОТ_БЕЗ_@"
 SHOP_UPDATE_INTERVAL = 15 * 60
+ADMIN_SECRET_CODE = "777"  # Секретный код для входа в админку (поменяй)
 
 # ═══════════════════════════════════════════════
 # БАЗА
@@ -28,16 +29,24 @@ def load_db():
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for key in ["users", "games", "promos"]:
-                if key not in data:
-                    data[key] = {} if key != "promos" else {"ROULETTE": 500, "START": 100}
+            if "users" not in data: data["users"] = {}
+            if "games" not in data: data["games"] = {}
+            if "promos" not in data: 
+                data["promos"] = {
+                    "ROULETTE": {"type": "tokens", "amount": 500}, 
+                    "START": {"type": "tokens", "amount": 100}
+                }
             if "shop_stock" not in data: data["shop_stock"] = {}
             if "shop_timer" not in data: data["shop_timer"] = 0
             if "waiting_step" not in data: data["waiting_step"] = {}
             if "pending_count" not in data: data["pending_count"] = {}
             return data
         except Exception: pass
-    return {"users": {}, "games": {}, "promos": {"ROULETTE": 500, "START": 100}, "shop_stock": {}, "shop_timer": 0, "waiting_step": {}, "pending_count": {}}
+    return {
+        "users": {}, "games": {}, 
+        "promos": {"ROULETTE": {"type": "tokens", "amount": 500}, "START": {"type": "tokens", "amount": 100}}, 
+        "shop_stock": {}, "shop_timer": 0, "waiting_step": {}, "pending_count": {}
+    }
 
 def save_db(db):
     with open(DB_FILE, "w", encoding="utf-8") as f:
@@ -171,6 +180,102 @@ def start(message):
             "Я помогу поднять настроение тебе! Добавь меня в чат, "
             "и посмотрим, кто из нас останется в живых 😈")
     safe_send(message.chat.id, text, main_menu())
+
+# ═══════════════════════════════════════════════
+# АДМИН-ПАНЕЛЬ (ПРОМОКОДЫ)
+# ═══════════════════════════════════════════════
+@bot.message_handler(commands=["admin"])
+def admin_panel(message):
+    bot.send_message(message.chat.id, "🔐 Введи секретный код:")
+    bot.register_next_step_handler(message, admin_check)
+
+def admin_check(message):
+    if message.text.strip() == ADMIN_SECRET_CODE:
+        kb = InlineKeyboardMarkup(row_width=1)
+        kb.add(
+            InlineKeyboardButton("➕ Промокод на Токены", callback_data="adm_create_tokens"),
+            InlineKeyboardButton("🎁 Промокод на Предмет", callback_data="adm_create_item"),
+            InlineKeyboardButton("📋 Список промокодов", callback_data="adm_list_promos"),
+            InlineKeyboardButton("❌ Удалить промокод", callback_data="adm_delete_promo")
+        )
+        bot.send_message(message.chat.id, "👑 АДМИН-ПАНЕЛЬ", reply_markup=kb)
+    else:
+        bot.send_message(message.chat.id, "❌ Неверный код.")
+
+@bot.callback_query_handler(func=lambda c: c.data == "adm_create_tokens")
+def adm_create_tokens(call):
+    safe_answer(call)
+    bot.send_message(call.message.chat.id, "Введи: `КОД СУММА`\nПример: `WIN 500`")
+    bot.register_next_step_handler(call.message, adm_process_tokens)
+
+def adm_process_tokens(message):
+    parts = message.text.split()
+    if len(parts) != 2: return safe_send(message.chat.id, "❌ Формат: `КОД СУММА`")
+    code, amount_str = parts[0].upper(), parts[1]
+    try: amount = int(amount_str)
+    except ValueError: return safe_send(message.chat.id, "❌ Сумма должна быть числом.")
+    
+    db["promos"][code] = {"type": "tokens", "amount": amount}
+    save_db(db)
+    safe_send(message.chat.id, f"✅ Промокод `{code}` на {amount} токенов создан!")
+
+@bot.callback_query_handler(func=lambda c: c.data == "adm_create_item")
+def adm_create_item(call):
+    safe_answer(call)
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("👓 Рентген-очки", callback_data="adm_item_xray"),
+        InlineKeyboardButton("💊 Таблетка", callback_data="adm_item_pill"),
+        InlineKeyboardButton("👼 Зелье ангела", callback_data="adm_item_angel")
+    )
+    safe_edit(call.message.chat.id, call.message.message_id, "Выбери предмет:", kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("adm_item_"))
+def adm_item_chosen(call):
+    item = call.data.replace("adm_item_", "")
+    names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
+    bot.send_message(call.message.chat.id, f"Введи: `КОД КОЛИЧЕСТВО` для предмета *{names[item]}*\nПример: `XRAY3 5`")
+    bot.register_next_step_handler(call.message, adm_process_item, item)
+
+def adm_process_item(message, item):
+    parts = message.text.split()
+    if len(parts) != 2: return safe_send(message.chat.id, "❌ Формат: `КОД КОЛИЧЕСТВО`")
+    code, amount_str = parts[0].upper(), parts[1]
+    try: amount = int(amount_str)
+    except ValueError: return safe_send(message.chat.id, "❌ Количество должно быть числом.")
+    
+    db["promos"][code] = {"type": "item", "item": item, "amount": amount}
+    save_db(db)
+    names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
+    safe_send(message.chat.id, f"✅ Промокод `{code}` на {amount} шт. ({names[item]}) создан!")
+
+@bot.callback_query_handler(func=lambda c: c.data == "adm_list_promos")
+def adm_list_promos(call):
+    safe_answer(call)
+    if not db["promos"]:
+        return safe_edit(call.message.chat.id, call.message.message_id, "📭 Список пуст.", None)
+    lines = ["📋 СПИСОК ПРОМОКОДОВ:\n"]
+    for code, data in db["promos"].items():
+        if data["type"] == "tokens":
+            lines.append(f"• `{code}` — {data['amount']} токенов")
+        else:
+            lines.append(f"• `{code}` — {data['amount']} шт. ({data['item']})")
+    safe_edit(call.message.chat.id, call.message.message_id, "\n".join(lines), back_kb())
+
+@bot.callback_query_handler(func=lambda c: c.data == "adm_delete_promo")
+def adm_delete_promo(call):
+    safe_answer(call)
+    bot.send_message(call.message.chat.id, "Введи код промокода для удаления:")
+    bot.register_next_step_handler(call.message, adm_process_delete)
+
+def adm_process_delete(message):
+    code = message.text.strip().upper()
+    if code in db["promos"]:
+        del db["promos"][code]
+        save_db(db)
+        safe_send(message.chat.id, f"✅ Промокод `{code}` удален.")
+    else:
+        safe_send(message.chat.id, "❌ Промокод не найден.")
 
 # ═══════════════════════════════════════════════
 # МАГАЗИН
@@ -345,7 +450,7 @@ def start_afk_timer(game_id, chat_id):
             user["balance"] -= 10
             save_db(db)
             safe_send(chat_id, f"💸 @{user['username'] or current_player}, -10 токенов за АФК.")
-            game["turn"] = (game["turn"] + 1) % len(game["players"])
+      game["turn"] = (game["turn"] + 1) % len(game["players"])
             save_db(db)
             next_turn(game_id, chat_id)
         else:
@@ -451,8 +556,7 @@ def shoot_self(call):
             game["turn"] = (game["turn"] + 1) % len(game["players"])
     else:
         txt = "🎯 Щелчок! Пусто.\n"
-        game["turn"] = (game["turn"] 
-        + 1) % len(game["players"]))
+        game["turn"] = (game["turn"] + 1) % len(game["players"])
 
     save_db(db)
     safe_edit(msg.chat.id, msg.message_id, txt + "\nСледующий ход...", None)
@@ -467,6 +571,12 @@ def shoot_other(call):
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
     safe_answer(call)
+    safe_edit(call.message.chat.id, call.message.message_id, "🎯 В кого стреляем?", target_kb(game_id))
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("back_turn_"))
+def back_turn(call):
+    game_id = call.data.replace("back_turn_", "")
+        safe_answer(call)
     safe_edit(call.message.chat.id, call.message.message_id, "🎯 В кого стреляем?", target_kb(game_id))
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("back_turn_"))
@@ -685,13 +795,23 @@ def process_promo(message):
     if message.text.startswith("/"): return
     code = message.text.strip().upper()
     user = get_user(message.from_user.id)
+    
     if code not in db["promos"]: return safe_send(message.chat.id, "❌ Неверный код.", main_menu())
     if code in user.get("used_promos", []): return safe_send(message.chat.id, "❌ Уже активирован.", main_menu())
-    reward = db["promos"][code]
-    user["balance"] += reward
+    
+    promo = db["promos"][code]
+    if promo["type"] == "tokens":
+        user["balance"] += promo["amount"]
+        reward_text = f"+{promo['amount']} токенов"
+    elif promo["type"] == "item":
+        item = promo["item"]
+        user["inventory"][item] += promo["amount"]
+        names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
+        reward_text = f"+{promo['amount']} шт. {names[item]}"
+        
     user.setdefault("used_promos", []).append(code)
     save_db(db)
-    safe_send(message.chat.id, f"✅ +{reward} токенов! Баланс: {user['balance']}", main_menu())
+    safe_send(message.chat.id, f"✅ Активирован! Награда: {reward_text}\n💵 Баланс: {user['balance']}", main_menu())
 
 @bot.callback_query_handler(func=lambda c: c.data == "top_menu")
 def top_menu_cb(call):
