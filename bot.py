@@ -37,6 +37,7 @@ def load_db():
             if "shop_timer" not in data: data["shop_timer"] = 0
             if "waiting_step" not in data: data["waiting_step"] = {}
             if "pending_count" not in data: data["pending_count"] = {}
+            if "admins" not in data: data["admins"] = []
             for game in data["games"].values():
                 if isinstance(game, dict):
                     game.setdefault("participants", list(game.get("players", [])))
@@ -56,7 +57,7 @@ def load_db():
     return {
         "users": {}, "games": {}, 
         "promos": {"ROULETTE": {"type": "tokens", "amount": 500}, "START": {"type": "tokens", "amount": 100}}, 
-        "shop_stock": {}, "shop_timer": 0, "waiting_step": {}, "pending_count": {}
+        "shop_stock": {}, "shop_timer": 0, "waiting_step": {}, "pending_count": {}, "admins": []
     }
 
 def save_db(db):
@@ -195,6 +196,9 @@ def safe_edit(chat_id, message_id, text, markup=None):
     try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     except Exception: pass
 
+def is_admin(call):
+    return str(call.from_user.id) in db.get("admins", [])
+
 # ═══════════════════════════════════════════════
 # /start
 # ═══════════════════════════════════════════════
@@ -213,6 +217,8 @@ def start(message):
 # ═══════════════════════════════════════════════
 @bot.message_handler(commands=["admin"])
 def admin_panel(message):
+    if message.chat.type != "private":
+        return safe_send(message.chat.id, "🔐 Открой бота в личных сообщениях и отправь /admin.")
     if not ADMIN_SECRET_CODE:
         return safe_send(message.chat.id, "❌ Админ-панель отключена: задай ADMIN_SECRET_CODE в переменных окружения.")
     prompt = safe_send(message.chat.id, "🔐 Введи секретный код:")
@@ -220,7 +226,12 @@ def admin_panel(message):
         bot.register_next_step_handler(prompt, admin_check)
 
 def admin_check(message):
-    if (message.text or "").strip() == ADMIN_SECRET_CODE:
+    if (message.chat.type == "private" and (message.text or "").strip() == ADMIN_SECRET_CODE:
+        db.setdefault("admins", [])
+        admin_id = str(message.from_user.id)
+        if admin_id not in db["admins"]:
+            db["admins"].append(admin_id)
+            save_db(db)
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
             InlineKeyboardButton("➕ Промокод на Токены", callback_data="adm_create_tokens"),
@@ -234,6 +245,7 @@ def admin_check(message):
 
 @bot.callback_query_handler(func=lambda c: c.data == "adm_create_tokens")
 def adm_create_tokens(call):
+    if not is_admin(call): return safe_answer(call, "❌ Нет доступа.", show_alert=True)
     safe_answer(call)
     prompt = safe_send(call.message.chat.id, "Введи: `КОД СУММА`\nПример: `WIN 500`")
     if prompt:
@@ -253,6 +265,7 @@ def adm_process_tokens(message):
 
 @bot.callback_query_handler(func=lambda c: c.data == "adm_create_item")
 def adm_create_item(call):
+    if not is_admin(call): return safe_answer(call, "❌ Нет доступа.", show_alert=True)
     safe_answer(call)
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -264,6 +277,7 @@ def adm_create_item(call):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("adm_item_"))
 def adm_item_chosen(call):
+    if not is_admin(call): return safe_answer(call, "❌ Нет доступа.", show_alert=True)
     item = call.data.replace("adm_item_", "")
     names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
     if item not in names:
@@ -288,6 +302,7 @@ def adm_process_item(message, item):
 
 @bot.callback_query_handler(func=lambda c: c.data == "adm_list_promos")
 def adm_list_promos(call):
+    if not is_admin(call): return safe_answer(call, "❌ Нет доступа.", show_alert=True)
     safe_answer(call)
     if not db["promos"]:
         return safe_edit(call.message.chat.id, call.message.message_id, "📭 Список пуст.", None)
@@ -301,6 +316,7 @@ def adm_list_promos(call):
 
 @bot.callback_query_handler(func=lambda c: c.data == "adm_delete_promo")
 def adm_delete_promo(call):
+    if not is_admin(call): return safe_answer(call, "❌ Нет доступа.", show_alert=True)
     safe_answer(call)
     prompt = safe_send(call.message.chat.id, "Введи код промокода для удаления:")
     if prompt:
