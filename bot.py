@@ -44,6 +44,7 @@ def load_db():
                     game.setdefault("afk_warned", [])
                     game.setdefault("turn_started_at", None)
                     game.setdefault("next_shot_bullet", None)
+                    game.setdefault("turn_action_pending", False)
                     game.setdefault("bets_settled", False)
             return data
         except Exception as exc:
@@ -425,7 +426,7 @@ def process_bet(message):
         "lives": {user_id: 6}, "status": "lobby", "turn": 0,
         "afk_warned": [], "username": message.from_user.username or user_id,
         "participants": [user_id], "turn_started_at": None,
-        "next_shot_bullet": None, "bets_settled": False
+        "next_shot_bullet": None, "turn_action_pending": False, "bets_settled": False
     }
     save_db(db)
     text = (
@@ -482,6 +483,7 @@ def next_turn(game_id, chat_id):
     if not game or game.get("status") != "playing" or not game.get("players"): return
     game["turn"] = game.get("turn", 0) % len(game["players"])
     game["turn_started_at"] = time.time_ns()
+    game["turn_action_pending"] = False
     current_player = game["players"][game["turn"]]
     user = get_user(current_player)
     hp = game['lives'][current_player]
@@ -550,6 +552,8 @@ def use_xray(call):
         return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_p = game["players"][game["turn"]]
     if str(call.from_user.id) != current_p: return safe_answer(call, "❌ Не твой ход!")
+    if game.get("turn_action_pending"):
+        return safe_answer(call, "⏳ Ход уже обрабатывается.", show_alert=True)
     user = get_user(current_p)
     if user["inventory"]["xray"] <= 0: return safe_answer(call, "❌ Нет очков!")
     user["inventory"]["xray"] -= 1
@@ -576,6 +580,8 @@ def use_angel(call):
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player:
         return safe_answer(call, "❌ Не твой ход!", show_alert=True)
+    if game.get("turn_action_pending"):
+        return safe_answer(call, "⏳ Ход уже обрабатывается.", show_alert=True)
     user = get_user(current_player)
     if user["inventory"].get("angel", 0) <= 0:
         return safe_answer(call, "❌ Нет зелья ангела!", show_alert=True)
@@ -594,13 +600,17 @@ def use_pill(call):
         return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_p = game["players"][game["turn"]]
     if str(call.from_user.id) != current_p: return safe_answer(call, "❌ Не твой ход!")
+    if game.get("turn_action_pending"):
+        return safe_answer(call, "⏳ Ход уже обрабатывается.", show_alert=True)
     user = get_user(current_p)
     if user["inventory"]["pill"] <= 0: return safe_answer(call, "❌ Нет таблеток!")
     game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
+    game["turn_action_pending"] = True
     game["next_shot_bullet"] = None
     user["inventory"]["pill"] -= 1
     msg = safe_send(call.message.chat.id, "💊 Ты проглотил таблетку...")
     if not msg:
+        game["turn_action_pending"] = False
         user["inventory"]["pill"] += 1
         save_db(db)
         return safe_answer(call, "⚠️ Не удалось отправить сообщение. Попробуй ещё раз.")
@@ -637,8 +647,11 @@ def shoot_self(call):
         return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
+    if game.get("turn_action_pending"):
+        return safe_answer(call, "⏳ Ход уже обрабатывается.", show_alert=True)
 
     game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
+    game["turn_action_pending"] = True
     safe_answer(call, "🔫 Спускаем курок...")
     msg = safe_send(call.message.chat.id, "🔄 Крутим барабан...")
     if msg:
@@ -715,8 +728,11 @@ def target_chosen(call):
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
     if target_id not in game["players"] or target_id == current_player:
         return safe_answer(call, "❌ Неверная цель.", show_alert=True)
+    if game.get("turn_action_pending"):
+        return safe_answer(call, "⏳ Ход уже обрабатывается.", show_alert=True)
 
     game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
+    game["turn_action_pending"] = True
     safe_answer(call, "🎯 Стреляем...")
     msg = safe_send(call.message.chat.id, "🔄 Крутим барабан...")
     if msg:
