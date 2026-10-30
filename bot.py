@@ -238,6 +238,8 @@ def adm_create_item(call):
 def adm_item_chosen(call):
     item = call.data.replace("adm_item_", "")
     names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
+    if item not in names:
+        return safe_answer(call, "❌ Неизвестный предмет.", show_alert=True)
     safe_answer(call)
     prompt = safe_send(call.message.chat.id, f"Введи: `КОД КОЛИЧЕСТВО` для предмета *{names[item]}*\nПример: `XRAY3 5`")
     if prompt:
@@ -372,13 +374,14 @@ def process_bet(message):
     if user_id in db["pending_count"]: del db["pending_count"][user_id]
     save_db(db)
 
-    game_id = f"{user_id}_{int(time.time())}"
+    game_id = f"{user_id}_{time.time_ns()}"
     db["games"][game_id] = {
         "creator": user_id, "chat_id": str(message.chat.id),
         "players_needed": count, "bet": bet, "players": [user_id],
         "lives": {user_id: 6}, "status": "lobby", "turn": 0,
         "afk_warned": [], "username": message.from_user.username or user_id,
-        "participants": [user_id], "turn_started_at": None, "bets_settled": False
+        "participants": [user_id], "turn_started_at": None,
+        "next_shot_bullet": None, "bets_settled": False
     }
     save_db(db)
     text = (
@@ -502,8 +505,10 @@ def use_xray(call):
     user = get_user(current_p)
     if user["inventory"]["xray"] <= 0: return safe_answer(call, "❌ Нет очков!")
     user["inventory"]["xray"] -= 1
+    if game.get("next_shot_bullet") is None:
+        game["next_shot_bullet"] = random.random() < (1/6)
     save_db(db)
-    is_bullet = random.random() < (1/6)
+    is_bullet = game["next_shot_bullet"]
     status = "БОЕВОЙ 🔴" if is_bullet else "ХОЛОСТОЙ ⚪"
     try:
         bot.send_message(call.from_user.id, f"👓 Твой рентген показывает: патрон **{status}**")
@@ -540,6 +545,7 @@ def use_pill(call):
     if str(call.from_user.id) != current_p: return safe_answer(call, "❌ Не твой ход!")
     user = get_user(current_p)
     if user["inventory"]["pill"] <= 0: return safe_answer(call, "❌ Нет таблеток!")
+    game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
     user["inventory"]["pill"] -= 1
     msg = safe_send(call.message.chat.id, "💊 Ты проглотил таблетку...")
     if not msg:
@@ -580,13 +586,17 @@ def shoot_self(call):
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
 
+    game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
     safe_answer(call, "🔫 Спускаем курок...")
     msg = safe_send(call.message.chat.id, "🔄 Крутим барабан...")
     if msg:
         time.sleep(1)
         safe_edit(msg.chat.id, msg.message_id, "💥 БАМ!")
 
-    is_bullet = random.random() < (1/6)
+    is_bullet = game.get("next_shot_bullet")
+    if is_bullet is None:
+        is_bullet = random.random() < (1/6)
+    game["next_shot_bullet"] = None
     if is_bullet:
         game["lives"][current_player] -= 1
         hp = game["lives"][current_player]
@@ -653,6 +663,7 @@ def target_chosen(call):
     if target_id not in game["players"] or target_id == current_player:
         return safe_answer(call, "❌ Неверная цель.", show_alert=True)
 
+    game["turn_started_at"] = time.time_ns()  # инвалидируем таймер текущего хода
     safe_answer(call, "🎯 Стреляем...")
     msg = safe_send(call.message.chat.id, "🔄 Крутим барабан...")
     if msg:
@@ -660,7 +671,10 @@ def target_chosen(call):
         safe_edit(msg.chat.id, msg.message_id, "💥 БАМ!")
 
     shooter_id = current_player
-    is_bullet = random.random() < (1/6)
+    is_bullet = game.get("next_shot_bullet")
+    if is_bullet is None:
+        is_bullet = random.random() < (1/6)
+    game["next_shot_bullet"] = None
     if is_bullet:
         game["lives"][target_id] -= 2
         t_user = get_user(target_id)
