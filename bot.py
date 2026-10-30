@@ -33,6 +33,9 @@ def load_db():
             if "users" not in data: data["users"] = {}
             if "games" not in data: data["games"] = {}
             if "promos" not in data: data["promos"] = {}
+            # Удаляем старые встроенные промокоды из уже существующей базы.
+            data["promos"].pop("ROULETTE", None)
+            data["promos"].pop("START", None)
             if "shop_stock" not in data: data["shop_stock"] = {}
             if "shop_timer" not in data: data["shop_timer"] = 0
             if "waiting_step" not in data: data["waiting_step"] = {}
