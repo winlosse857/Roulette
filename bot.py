@@ -404,7 +404,7 @@ def join_game(call):
     if len(game["players"]) >= game["players_needed"]: return safe_answer(call, "❌ Мест нет!", show_alert=True)
 
     game["players"].append(str(call.from_user.id))
-    game.setdefault("participants", list(game["players"])).append(str(call.from_user.id))
+    game.setdefault("participants", [game["creator"]]).append(str(call.from_user.id))
     game["lives"][str(call.from_user.id)] = 6
     save_db(db)
     safe_answer(call, "✅ Ты в игре!")
@@ -575,7 +575,8 @@ def use_pill(call):
 def shoot_self(call):
     game_id = call.data.replace("shoot_self_", "")
     game = db["games"].get(game_id)
-    if not game or game["status"] != "playing": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
 
@@ -602,7 +603,7 @@ def shoot_self(call):
             if len(game["players"]) <= 1:
                 save_db(db)
                 return finish_game(game_id, call.message.chat.id, msg)
-            game["turn"] = (game["players"].index(shooter_id) + 1) % len(game["players"])
+            game["turn"] = game["turn"] % len(game["players"])
         else:
             game["turn"] = (game["turn"] + 1) % len(game["players"])
     else:
@@ -621,7 +622,6 @@ def shoot_self(call):
 def shoot_other(call):
     game_id = call.data.replace("shoot_other_", "")
     game = db["games"].get(game_id)
-    if not game or game["status"] != "playing": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     if not game or game.get("status") != "playing" or not game.get("players"):
         return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
@@ -677,7 +677,7 @@ def target_chosen(call):
             if len(game["players"]) <= 1:
                 save_db(db)
                 return finish_game(game_id, call.message.chat.id, msg)
-            game["turn"] = game["turn"] % len(game["players"])
+            game["turn"] = (game["players"].index(shooter_id) + 1) % len(game["players"])
         else:
             game["turn"] = (game["turn"] + 1) % len(game["players"])
     else:
