@@ -450,7 +450,7 @@ def start_afk_timer(game_id, chat_id):
             user["balance"] -= 10
             save_db(db)
             safe_send(chat_id, f"💸 @{user['username'] or current_player}, -10 токенов за АФК.")
-      game["turn"] = (game["turn"] + 1) % len(game["players"])
+            game["turn"] = (game["turn"] + 1) % len(game["players"])
             save_db(db)
             next_turn(game_id, chat_id)
         else:
@@ -576,20 +576,19 @@ def shoot_other(call):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("back_turn_"))
 def back_turn(call):
     game_id = call.data.replace("back_turn_", "")
-        safe_answer(call)
-    safe_edit(call.message.chat.id, call.message.message_id, "🎯 В кого стреляем?", target_kb(game_id))
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("back_turn_"))
-def back_turn(call):
-    game_id = call.data.replace("back_turn_", "")
+    game = db["games"].get(game_id)
+    if not game or game.get("status") != "playing":
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
+    current_player = game["players"][game["turn"]]
+    if str(call.from_user.id) != current_player:
+        return safe_answer(call, "❌ Не твой ход!", show_alert=True)
     safe_answer(call)
-    next_turn(game_id, call.message.chat.id)
+    safe_edit(call.message.chat.id, call.message.message_id, "🔫 Выбирай действие:", turn_kb(game_id))
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("target_"))
 def target_chosen(call):
-    parts = call.data.split("_")
-    game_id = parts[1]
-    target_id = parts[2]
+    payload = call.data[len("target_"):]
+    game_id, target_id = payload.rsplit("_", 1)
     game = db["games"].get(game_id)
     if not game or game["status"] != "playing": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
