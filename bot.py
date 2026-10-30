@@ -37,6 +37,13 @@ def load_db():
             if "shop_timer" not in data: data["shop_timer"] = 0
             if "waiting_step" not in data: data["waiting_step"] = {}
             if "pending_count" not in data: data["pending_count"] = {}
+            for game in data["games"].values():
+                if isinstance(game, dict):
+                    game.setdefault("participants", list(game.get("players", [])))
+                    game.setdefault("afk_warned", [])
+                    game.setdefault("turn_started_at", None)
+                    game.setdefault("next_shot_bullet", None)
+                    game.setdefault("bets_settled", False)
             return data
         except Exception as exc:
             backup_file = DB_FILE + ".corrupt"
@@ -85,8 +92,17 @@ def get_user(uid):
         }
         save_db(db)
     u = db["users"][uid]
-    if "inventory" not in u: u["inventory"] = {"xray": 0, "pill": 0, "angel": 0}
-    if "buffs" not in u: u["buffs"] = {"angel_active": False}
+    defaults = {
+        "balance": 1000, "wins": 0, "deaths": 0, "username": None,
+        "used_promos": [], "afk_count": 0, "ban_until": 0, "last_minus_bonus": 0,
+        "inventory": {"xray": 0, "pill": 0, "angel": 0},
+        "buffs": {"angel_active": False}
+    }
+    for key, value in defaults.items():
+        u.setdefault(key, value.copy() if isinstance(value, (dict, list)) else value)
+    for item in ("xray", "pill", "angel"):
+        u["inventory"].setdefault(item, 0)
+    u["buffs"].setdefault("angel_active", False)
     return u
 
 # ═══════════════════════════════════════════════
@@ -415,6 +431,8 @@ def join_game(call):
     user = get_user(call.from_user.id)
     if not game or game["status"] != "lobby": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     if str(call.from_user.id) in game["players"]: return safe_answer(call, "❌ Ты уже в игре.", show_alert=True)
+    if time.time() < user.get("ban_until", 0):
+        return safe_answer(call, "❌ Ты временно заблокирован за АФК.", show_alert=True)
     if user["balance"] < game.get("bet", 0): return safe_answer(call, "❌ Недостаточно токенов для ставки!", show_alert=True)
     if len(game["players"]) >= game["players_needed"]: return safe_answer(call, "❌ Мест нет!", show_alert=True)
 
@@ -623,6 +641,7 @@ def shoot_self(call):
         if hp <= 0 and user["buffs"]["angel_active"]:
             user["buffs"]["angel_active"] = False
             game["lives"][current_player] = 2
+            game["turn"] = (game["turn"] + 1) % len(game["players"])
             txt += "👼 ЗЕЛЬЕ АНГЕЛА АКТИВИРОВАНО! Ты воскрес с 1 жизнью!\n"
         elif hp <= 0:
             game["players"].remove(current_player)
@@ -701,6 +720,7 @@ def target_chosen(call):
         if hp <= 0 and t_user["buffs"]["angel_active"]:
             t_user["buffs"]["angel_active"] = False
             game["lives"][target_id] = 2
+            game["turn"] = (game["turn"] + 1) % len(game["players"])
             txt += f"👼 @{t_user['username'] or target_id} ВОСКРЕС (Зелье ангела)!\n"
         elif hp <= 0:
             game["players"].remove(target_id)
@@ -959,6 +979,10 @@ if __name__ == "__main__":
             BOT_USERNAME = me.username or ""
         print(f"🚀 ROULETTE BOT запущен: @{BOT_USERNAME or me.id}")
         update_shop_stock()
+        # Восстанавливаем ход и AFK-таймеры активных игр после перезапуска Termux.
+        for game_id, game in list(db["games"].items()):
+            if game.get("status") == "playing" and game.get("players"):
+                next_turn(game_id, int(game["chat_id"]))
         bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
     except KeyboardInterrupt:
         print("\n🛑 Бот остановлен.")
