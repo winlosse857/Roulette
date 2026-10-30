@@ -226,7 +226,7 @@ def admin_panel(message):
         bot.register_next_step_handler(prompt, admin_check)
 
 def admin_check(message):
-    if (message.chat.type == "private" and (message.text or "").strip() == ADMIN_SECRET_CODE:
+    if message.chat.type == "private" and (message.text or "").strip() == ADMIN_SECRET_CODE:
         db.setdefault("admins", [])
         admin_id = str(message.from_user.id)
         if admin_id not in db["admins"]:
