@@ -620,6 +620,7 @@ def use_pill(call):
         txt = "💀 Таблетка оказалась ядом! Ты умираешь..."
         game["players"].remove(current_p)
         del game["lives"][current_p]
+        user["deaths"] += 1
         if len(game["players"]) <= 1:
             save_db(db)
             return finish_game(game_id, call.message.chat.id, msg)
@@ -675,6 +676,7 @@ def shoot_self(call):
         elif hp <= 0:
             game["players"].remove(current_player)
             del game["lives"][current_player]
+            user["deaths"] += 1
             txt += "☠️ Ты выбыл!\n"
             if len(game["players"]) <= 1:
                 save_db(db)
@@ -757,6 +759,7 @@ def target_chosen(call):
         elif hp <= 0:
             game["players"].remove(target_id)
             del game["lives"][target_id]
+            t_user["deaths"] += 1
             txt += f"☠️ @{t_user['username'] or target_id} выбыл!\n"
             if len(game["players"]) <= 1:
                 save_db(db)
