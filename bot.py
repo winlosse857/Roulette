@@ -4,22 +4,19 @@ import json
 import os
 import time
 import threading
-from telebot import apihelper
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ═══════════════════════════════════════════════
-# НАСТРОЙКИ (ВПИШИ СВОЙ ТОКЕН И СЕРВЕР)
+# НАСТРОЙКИ: задаются переменными окружения (подходит для Termux).
+# BOT_TOKEN и ADMIN_SECRET_CODE не хранятся в репозитории.
 # ═══════════════════════════════════════════════
-TOKEN = "ВАШ_ТОКЕН_БОТА"
-SERVER_URL = "http://177.3.213.27:8081"
-apihelper.API_URL = f"{SERVER_URL}/bot{{0}}/{{1}}"
-apihelper.FILE_URL = f"{SERVER_URL}/file/bot{{0}}/{{1}}"
-bot = telebot.TeleBot(TOKEN)
-
-DB_FILE = "roulette_db.json"
-BOT_USERNAME = "ТВОЙ_БОТ_БЕЗ_@"
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
+ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "").strip()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, os.getenv("DB_FILE", "roulette_db.json"))
 SHOP_UPDATE_INTERVAL = 15 * 60
-ADMIN_SECRET_CODE = "777"  # Секретный код для входа в админку (поменяй)
+bot = telebot.TeleBot(TOKEN or "123456:PLACEHOLDER")
 
 # ═══════════════════════════════════════════════
 # БАЗА
@@ -122,6 +119,8 @@ def turn_kb(game_id):
         kb.add(InlineKeyboardButton(f"👓 Рентген ({inv['xray']})", callback_data=f"use_xray_{game_id}"))
     if inv.get("pill", 0) > 0:
         kb.add(InlineKeyboardButton(f"💊 Таблетка ({inv['pill']})", callback_data=f"use_pill_{game_id}"))
+    if inv.get("angel", 0) > 0 and not user.get("buffs", {}).get("angel_active", False):
+        kb.add(InlineKeyboardButton(f"👼 Зелье ангела ({inv['angel']})", callback_data=f"use_angel_{game_id}"))
     return kb
 
 def target_kb(game_id):
@@ -186,11 +185,14 @@ def start(message):
 # ═══════════════════════════════════════════════
 @bot.message_handler(commands=["admin"])
 def admin_panel(message):
-    bot.send_message(message.chat.id, "🔐 Введи секретный код:")
-    bot.register_next_step_handler(message, admin_check)
+    if not ADMIN_SECRET_CODE:
+        return safe_send(message.chat.id, "❌ Админ-панель отключена: задай ADMIN_SECRET_CODE в переменных окружения.")
+    prompt = safe_send(message.chat.id, "🔐 Введи секретный код:")
+    if prompt:
+        bot.register_next_step_handler(prompt, admin_check)
 
 def admin_check(message):
-    if message.text.strip() == ADMIN_SECRET_CODE:
+    if (message.text or "").strip() == ADMIN_SECRET_CODE:
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
             InlineKeyboardButton("➕ Промокод на Токены", callback_data="adm_create_tokens"),
@@ -205,15 +207,17 @@ def admin_check(message):
 @bot.callback_query_handler(func=lambda c: c.data == "adm_create_tokens")
 def adm_create_tokens(call):
     safe_answer(call)
-    bot.send_message(call.message.chat.id, "Введи: `КОД СУММА`\nПример: `WIN 500`")
-    bot.register_next_step_handler(call.message, adm_process_tokens)
+    prompt = safe_send(call.message.chat.id, "Введи: `КОД СУММА`\nПример: `WIN 500`")
+    if prompt:
+        bot.register_next_step_handler(prompt, adm_process_tokens)
 
 def adm_process_tokens(message):
-    parts = message.text.split()
+    parts = (message.text or "").split()
     if len(parts) != 2: return safe_send(message.chat.id, "❌ Формат: `КОД СУММА`")
     code, amount_str = parts[0].upper(), parts[1]
     try: amount = int(amount_str)
     except ValueError: return safe_send(message.chat.id, "❌ Сумма должна быть числом.")
+    if amount <= 0: return safe_send(message.chat.id, "❌ Сумма должна быть больше нуля.")
     
     db["promos"][code] = {"type": "tokens", "amount": amount}
     save_db(db)
@@ -234,15 +238,18 @@ def adm_create_item(call):
 def adm_item_chosen(call):
     item = call.data.replace("adm_item_", "")
     names = {"xray": "Рентген", "pill": "Таблетка", "angel": "Зелье ангела"}
-    bot.send_message(call.message.chat.id, f"Введи: `КОД КОЛИЧЕСТВО` для предмета *{names[item]}*\nПример: `XRAY3 5`")
-    bot.register_next_step_handler(call.message, adm_process_item, item)
+    safe_answer(call)
+    prompt = safe_send(call.message.chat.id, f"Введи: `КОД КОЛИЧЕСТВО` для предмета *{names[item]}*\nПример: `XRAY3 5`")
+    if prompt:
+        bot.register_next_step_handler(prompt, adm_process_item, item)
 
 def adm_process_item(message, item):
-    parts = message.text.split()
+    parts = (message.text or "").split()
     if len(parts) != 2: return safe_send(message.chat.id, "❌ Формат: `КОД КОЛИЧЕСТВО`")
     code, amount_str = parts[0].upper(), parts[1]
     try: amount = int(amount_str)
     except ValueError: return safe_send(message.chat.id, "❌ Количество должно быть числом.")
+    if amount <= 0: return safe_send(message.chat.id, "❌ Количество должно быть больше нуля.")
     
     db["promos"][code] = {"type": "item", "item": item, "amount": amount}
     save_db(db)
@@ -265,11 +272,12 @@ def adm_list_promos(call):
 @bot.callback_query_handler(func=lambda c: c.data == "adm_delete_promo")
 def adm_delete_promo(call):
     safe_answer(call)
-    bot.send_message(call.message.chat.id, "Введи код промокода для удаления:")
-    bot.register_next_step_handler(call.message, adm_process_delete)
+    prompt = safe_send(call.message.chat.id, "Введи код промокода для удаления:")
+    if prompt:
+        bot.register_next_step_handler(prompt, adm_process_delete)
 
 def adm_process_delete(message):
-    code = message.text.strip().upper()
+    code = (message.text or "").strip().upper()
     if code in db["promos"]:
         del db["promos"][code]
         save_db(db)
@@ -333,7 +341,7 @@ def create_game(message):
 
 @bot.message_handler(func=lambda m: db.get("waiting_step", {}).get(str(m.from_user.id)) == "players_count")
 def process_players_count(message):
-    if message.text.startswith("/"): return
+    if not message.text or message.text.startswith("/"): return
     try:
         count = int(message.text.strip())
         if count < 2 or count > 10: 
@@ -348,12 +356,14 @@ def process_players_count(message):
 
 @bot.message_handler(func=lambda m: db.get("waiting_step", {}).get(str(m.from_user.id)) == "bet")
 def process_bet(message):
-    if message.text.startswith("/"): return
+    if not message.text or message.text.startswith("/"): return
     user_id = str(message.from_user.id)
     
     try:
         bet = int(message.text.strip())
         if bet < 0: return safe_send(message.chat.id, "❌ Ставка >= 0.")
+        if bet > get_user(user_id)["balance"]:
+            return safe_send(message.chat.id, "❌ Недостаточно токенов для такой ставки.")
     except ValueError: return safe_send(message.chat.id, "❌ Введи число.")
 
     count = db["pending_count"].get(user_id, 2)
@@ -367,7 +377,8 @@ def process_bet(message):
         "creator": user_id, "chat_id": str(message.chat.id),
         "players_needed": count, "bet": bet, "players": [user_id],
         "lives": {user_id: 6}, "status": "lobby", "turn": 0,
-        "afk_warned": [], "username": message.from_user.username or user_id
+        "afk_warned": [], "username": message.from_user.username or user_id,
+        "participants": [user_id], "turn_started_at": None, "bets_settled": False
     }
     save_db(db)
     text = (
@@ -389,10 +400,11 @@ def join_game(call):
     user = get_user(call.from_user.id)
     if not game or game["status"] != "lobby": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     if str(call.from_user.id) in game["players"]: return safe_answer(call, "❌ Ты уже в игре.", show_alert=True)
-    if user["balance"] < 0: return safe_answer(call, "❌ Баланс в минусе!", show_alert=True)
+    if user["balance"] < game.get("bet", 0): return safe_answer(call, "❌ Недостаточно токенов для ставки!", show_alert=True)
     if len(game["players"]) >= game["players_needed"]: return safe_answer(call, "❌ Мест нет!", show_alert=True)
 
     game["players"].append(str(call.from_user.id))
+    game.setdefault("participants", list(game["players"])).append(str(call.from_user.id))
     game["lives"][str(call.from_user.id)] = 6
     save_db(db)
     safe_answer(call, "✅ Ты в игре!")
@@ -418,7 +430,9 @@ def start_game(call):
 
 def next_turn(game_id, chat_id):
     game = db["games"].get(game_id)
-    if not game or game["status"] != "playing": return
+    if not game or game.get("status") != "playing" or not game.get("players"): return
+    game["turn"] = game.get("turn", 0) % len(game["players"])
+    game["turn_started_at"] = time.time_ns()
     current_player = game["players"][game["turn"]]
     user = get_user(current_player)
     hp = game['lives'][current_player]
@@ -431,11 +445,18 @@ def next_turn(game_id, chat_id):
     safe_send(chat_id, text, turn_kb(game_id))
     start_afk_timer(game_id, chat_id)
 
-def start_afk_timer(game_id, chat_id):
+def start_afk_timer(game_id, chat_id, turn_token=None):
+    game = db["games"].get(game_id)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return
+    turn_token = turn_token if turn_token is not None else game.get("turn_started_at")
+
     def timer():
         time.sleep(60)
         game = db["games"].get(game_id)
-        if not game or game["status"] != "playing": return
+        if (not game or game.get("status") != "playing" or not game.get("players")
+                or game.get("turn_started_at") != turn_token):
+            return
         current_player = game["players"][game["turn"]]
         user = get_user(current_player)
         warns = game["afk_warned"].count(current_player)
@@ -444,7 +465,7 @@ def start_afk_timer(game_id, chat_id):
             game["afk_warned"].append(current_player)
             save_db(db)
             safe_send(chat_id, f"⚠️ @{user['username'] or current_player}, твой ход! Штраф за АФК.")
-            start_afk_timer(game_id, chat_id)
+            start_afk_timer(game_id, chat_id, turn_token)
         elif warns == 1:
             game["afk_warned"].append(current_player)
             user["balance"] -= 10
@@ -474,6 +495,8 @@ def start_afk_timer(game_id, chat_id):
 def use_xray(call):
     game_id = call.data.replace("use_xray_", "")
     game = db["games"].get(game_id)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_p = game["players"][game["turn"]]
     if str(call.from_user.id) != current_p: return safe_answer(call, "❌ Не твой ход!")
     user = get_user(current_p)
@@ -488,16 +511,41 @@ def use_xray(call):
     except Exception:
         safe_answer(call, "⚠️ Не могу написать в ЛС! Нажми /start у бота в личке.", show_alert=True)
 
+@bot.callback_query_handler(func=lambda c: c.data.startswith("use_angel_"))
+def use_angel(call):
+    game_id = call.data.replace("use_angel_", "")
+    game = db["games"].get(game_id)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
+    current_player = game["players"][game["turn"]]
+    if str(call.from_user.id) != current_player:
+        return safe_answer(call, "❌ Не твой ход!", show_alert=True)
+    user = get_user(current_player)
+    if user["inventory"].get("angel", 0) <= 0:
+        return safe_answer(call, "❌ Нет зелья ангела!", show_alert=True)
+    if user["buffs"].get("angel_active", False):
+        return safe_answer(call, "👼 Зелье уже активно!", show_alert=True)
+    user["inventory"]["angel"] -= 1
+    user["buffs"]["angel_active"] = True
+    save_db(db)
+    safe_answer(call, "👼 Зелье ангела активно до первого смертельного попадания!", show_alert=True)
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("use_pill_"))
 def use_pill(call):
     game_id = call.data.replace("use_pill_", "")
     game = db["games"].get(game_id)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_p = game["players"][game["turn"]]
     if str(call.from_user.id) != current_p: return safe_answer(call, "❌ Не твой ход!")
     user = get_user(current_p)
     if user["inventory"]["pill"] <= 0: return safe_answer(call, "❌ Нет таблеток!")
     user["inventory"]["pill"] -= 1
     msg = safe_send(call.message.chat.id, "💊 Ты проглотил таблетку...")
+    if not msg:
+        user["inventory"]["pill"] += 1
+        save_db(db)
+        return safe_answer(call, "⚠️ Не удалось отправить сообщение. Попробуй ещё раз.")
     time.sleep(1)
     if random.random() < 0.5:
         game["lives"][current_p] = 0
@@ -513,7 +561,10 @@ def use_pill(call):
         txt = "👼 Таблетка дала тебе жизнь! (+1 жизнь)"
         game["turn"] = (game["turn"] + 1) % len(game["players"])
     save_db(db)
-    safe_edit(msg.chat.id, msg.message_id, txt, None)
+    if msg:
+        safe_edit(msg.chat.id, msg.message_id, txt, None)
+    else:
+        safe_send(call.message.chat.id, txt)
     time.sleep(1)
     next_turn(game_id, call.message.chat.id)
 
@@ -551,7 +602,7 @@ def shoot_self(call):
             if len(game["players"]) <= 1:
                 save_db(db)
                 return finish_game(game_id, call.message.chat.id, msg)
-            game["turn"] = game["turn"] % len(game["players"])
+            game["turn"] = (game["players"].index(shooter_id) + 1) % len(game["players"])
         else:
             game["turn"] = (game["turn"] + 1) % len(game["players"])
     else:
@@ -559,7 +610,10 @@ def shoot_self(call):
         game["turn"] = (game["turn"] + 1) % len(game["players"])
 
     save_db(db)
-    safe_edit(msg.chat.id, msg.message_id, txt + "\nСледующий ход...", None)
+    if msg:
+        safe_edit(msg.chat.id, msg.message_id, txt + "\nСледующий ход...", None)
+    else:
+        safe_send(call.message.chat.id, txt + "\nСледующий ход...")
     time.sleep(1)
     next_turn(game_id, call.message.chat.id)
 
@@ -568,6 +622,8 @@ def shoot_other(call):
     game_id = call.data.replace("shoot_other_", "")
     game = db["games"].get(game_id)
     if not game or game["status"] != "playing": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
     safe_answer(call)
@@ -590,9 +646,12 @@ def target_chosen(call):
     payload = call.data[len("target_"):]
     game_id, target_id = payload.rsplit("_", 1)
     game = db["games"].get(game_id)
-    if not game or game["status"] != "playing": return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
+    if not game or game.get("status") != "playing" or not game.get("players"):
+        return safe_answer(call, "❌ Игра неактивна.", show_alert=True)
     current_player = game["players"][game["turn"]]
     if str(call.from_user.id) != current_player: return safe_answer(call, "❌ Не твой ход!", show_alert=True)
+    if target_id not in game["players"] or target_id == current_player:
+        return safe_answer(call, "❌ Неверная цель.", show_alert=True)
 
     safe_answer(call, "🎯 Стреляем...")
     msg = safe_send(call.message.chat.id, "🔄 Крутим барабан...")
@@ -600,6 +659,7 @@ def target_chosen(call):
         time.sleep(1)
         safe_edit(msg.chat.id, msg.message_id, "💥 БАМ!")
 
+    shooter_id = current_player
     is_bullet = random.random() < (1/6)
     if is_bullet:
         game["lives"][target_id] -= 2
@@ -625,7 +685,10 @@ def target_chosen(call):
         game["turn"] = (game["turn"] + 1) % len(game["players"])
 
     save_db(db)
-    safe_edit(msg.chat.id, msg.message_id, txt + "\nСледующий ход...", None)
+    if msg:
+        safe_edit(msg.chat.id, msg.message_id, txt + "\nСледующий ход...", None)
+    else:
+        safe_send(call.message.chat.id, txt + "\nСледующий ход...")
     time.sleep(1)
     next_turn(game_id, call.message.chat.id)
 
@@ -634,7 +697,15 @@ def target_chosen(call):
 # ═══════════════════════════════════════════════
 def finish_game(game_id, chat_id, msg=None):
     game = db["games"].get(game_id)
+    if not game or game.get("status") == "finished":
+        return
     game["status"] = "finished"
+    winner_id = game["players"][0] if len(game["players"]) == 1 else None
+    if not game.get("bets_settled", False):
+        for participant_id in game.get("participants", game["players"]):
+            if participant_id != winner_id and game.get("bet", 0) > 0:
+                get_user(participant_id)["balance"] -= game["bet"]
+        game["bets_settled"] = True
     if len(game["players"]) == 1:
         winner_id = game["players"][0]
         winner = get_user(winner_id)
@@ -642,9 +713,6 @@ def finish_game(game_id, chat_id, msg=None):
         total_win = base_win * game["players_needed"]
         winner["balance"] += total_win
         winner["wins"] += 1
-        for p in list(db["users"].keys()):
-            if p in game["lives"] and game["lives"][p] <= 0 and game["bet"] > 0:
-                get_user(p)["balance"] -= game["bet"]
         save_db(db)
         text = (f"🏆 ИГРА ЗАВЕРШЕНА!\n\n"
                 f"Победитель: @{winner['username'] or winner_id}\n"
@@ -787,11 +855,12 @@ def about(call):
 @bot.callback_query_handler(func=lambda c: c.data == "secret_code")
 def secret_code(call):
     safe_answer(call)
-    safe_edit(call.message.chat.id, call.message.message_id, "🔐 Введи код:", back_kb())
-    bot.register_next_step_handler(call.message, process_promo)
+    prompt = safe_send(call.message.chat.id, "🔐 Введи код:")
+    if prompt:
+        bot.register_next_step_handler(prompt, process_promo)
 
 def process_promo(message):
-    if message.text.startswith("/"): return
+    if not message.text or message.text.startswith("/"): return
     code = message.text.strip().upper()
     user = get_user(message.from_user.id)
     
@@ -848,6 +917,16 @@ def refresh(call):
 # ЗАПУСК
 # ═══════════════════════════════════════════════
 if __name__ == "__main__":
-    print("🚀 ROULETTE BOT запущен...")
-    update_shop_stock()
-    bot.infinity_polling()
+    if not TOKEN:
+        raise SystemExit("❌ Не задан BOT_TOKEN. В Termux выполни: export BOT_TOKEN='токен_от_BotFather'")
+    if not ADMIN_SECRET_CODE:
+        print("⚠️ ADMIN_SECRET_CODE не задан: админ-панель будет отключена.")
+    try:
+        me = bot.get_me()
+        if not BOT_USERNAME:
+            BOT_USERNAME = me.username or ""
+        print(f"🚀 ROULETTE BOT запущен: @{BOT_USERNAME or me.id}")
+        update_shop_stock()
+        bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+    except KeyboardInterrupt:
+        print("\n🛑 Бот остановлен.")
